@@ -1,0 +1,1 @@
+from x_minify.routes import bp
