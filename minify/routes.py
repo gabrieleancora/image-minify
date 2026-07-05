@@ -1,3 +1,5 @@
+import hmac
+import os
 import re
 import requests
 from flask import Blueprint, request, send_file, url_for
@@ -10,23 +12,50 @@ _X_STATUS_ID_RE = re.compile(r'/status/(\d+)')
 _X_HOSTS = {'x.com', 'twitter.com', 'www.x.com', 'www.twitter.com', 'fxtwitter.com', 'www.fxtwitter.com'}
 
 
-def _is_x_url(url: str) -> bool:
-    from urllib.parse import urlparse
-    return urlparse(url).hostname in _X_HOSTS
+def _get_token() -> str | None:
+    return request.args.get('token')
+
+
+_TOKEN_FILE = os.path.join(os.path.dirname(__file__), '..', 'token.txt')
+_cached_token: str | None = None
+
+
+def _load_token() -> str | None:
+    global _cached_token
+    if _cached_token is not None:
+        return _cached_token
+    try:
+        with open(_TOKEN_FILE) as f:
+            _cached_token = f.read().strip()
+    except FileNotFoundError:
+        pass
+    return _cached_token
+
+
+def _check_token() -> bool:
+    expected = _load_token()
+    if not expected:
+        return True  # no token file → open access
+    provided = _get_token()
+    if not provided:
+        return False
+    return hmac.compare_digest(provided, expected)
 
 
 def _get_url_param() -> str | None:
     from urllib.parse import unquote
     raw = request.query_string.decode('utf-8')
-    prefix = 'url='
-    idx = raw.find(prefix)
+    idx = raw.find('url=')
     if idx == -1:
         return None
-    return unquote(raw[idx + len(prefix):])
+    return unquote(raw[idx + 4:])
 
 
 @bp.route('/minify')
 def minify():
+    if not _check_token():
+        return 'Unauthorized', 401
+
     url = _get_url_param()
     if not url:
         return 'Missing url parameter', 400
@@ -36,8 +65,13 @@ def minify():
     return _minify_direct(url)
 
 
+def _is_x_url(url: str) -> bool:
+    from urllib.parse import urlparse
+    return urlparse(url).hostname in _X_HOSTS
+
+
 def _minify_direct(url: str) -> str:
-    image_url = url_for('minify.serve_compressed_image', url=url)
+    image_url = url_for('minify.serve_compressed_image', token=_get_token(), url=url)
     return f'<img src="{image_url}" alt="Small image">'
 
 
@@ -55,13 +89,16 @@ def _minify_x(url: str) -> str:
         return 'No photos found in this tweet', 404
 
     return ''.join(
-        f'<img src="{url_for("minify.serve_compressed_image", url=p["url"])}" alt="X Image">'
+        f'<img src="{url_for("minify.serve_compressed_image", token=_get_token(), url=p["url"])}" alt="X Image">'
         for p in photos
     )
 
 
 @bp.route('/image')
 def serve_compressed_image():
+    if not _check_token():
+        return 'Unauthorized', 401
+
     url = _get_url_param()
     buf = fetch_and_compress(url)
     return send_file(buf, mimetype='image/jpeg')
