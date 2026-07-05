@@ -1,1 +1,0 @@
-from discord_minify.routes import bp
