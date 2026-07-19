@@ -1,7 +1,9 @@
+import html
 import hmac
 import os
 import re
 import requests
+from PIL import Image
 from flask import Blueprint, request, send_file, url_for
 from image_utils import fetch_and_compress
 
@@ -10,17 +12,22 @@ bp = Blueprint('minify', __name__)
 _FXTWITTER_API = 'https://api.fxtwitter.com/2/status/{}'
 _X_STATUS_ID_RE = re.compile(r'/status/(\d+)')
 _X_HOSTS = {'x.com', 'twitter.com', 'www.x.com', 'www.twitter.com', 'fxtwitter.com', 'www.fxtwitter.com'}
+_PRESETS = {
+    'data': (40, 640),
+    'balanced': (100, 1200),
+    'detail': (250, 1920),
+}
 
 
-def _get_token() -> str | None:
+def _get_token():
     return request.args.get('token')
 
 
 _TOKEN_FILE = os.path.join(os.path.dirname(__file__), '..', 'token.txt')
-_cached_token: str | None = None
+_cached_token = None
 
 
-def _load_token() -> str | None:
+def _load_token():
     global _cached_token
     if _cached_token is not None:
         return _cached_token
@@ -32,7 +39,7 @@ def _load_token() -> str | None:
     return _cached_token
 
 
-def _check_token() -> bool:
+def _check_token():
     expected = _load_token()
     if not expected:
         return True  # no token file → open access
@@ -42,13 +49,17 @@ def _check_token() -> bool:
     return hmac.compare_digest(provided, expected)
 
 
-def _get_url_param() -> str | None:
+def _get_url_param():
     from urllib.parse import unquote
     raw = request.query_string.decode('utf-8')
     idx = raw.find('url=')
     if idx == -1:
         return None
     return unquote(raw[idx + 4:])
+
+
+def _get_preset():
+    return request.args.get('mode', 'balanced')
 
 
 @bp.route('/minify')
@@ -60,37 +71,58 @@ def minify():
     if not url:
         return 'Missing url parameter', 400
 
+    if _get_preset() not in _PRESETS:
+        return 'Invalid mode; use data, balanced, or detail', 400
+
     if _is_x_url(url):
         return _minify_x(url)
     return _minify_direct(url)
 
 
-def _is_x_url(url: str) -> bool:
+def _is_x_url(url: str):
     from urllib.parse import urlparse
     return urlparse(url).hostname in _X_HOSTS
 
 
-def _minify_direct(url: str) -> str:
-    image_url = url_for('minify.serve_compressed_image', token=_get_token(), url=url)
-    return f'<img src="{image_url}" alt="Small image">'
+def _minify_direct(url: str):
+    image_url = url_for(
+        'minify.serve_compressed_image',
+        token=_get_token(),
+        mode=_get_preset(),
+        url=url,
+    )
+    return f'<img src="{html.escape(image_url, quote=True)}" alt="Small image">'
 
 
-def _minify_x(url: str) -> str:
+def _minify_x(url: str):
     match = _X_STATUS_ID_RE.search(url)
     if not match:
         return 'Could not extract status ID from URL', 400
 
     status_id = match.group(1)
-    api_resp = requests.get(_FXTWITTER_API.format(status_id), timeout=10)
-    api_resp.raise_for_status()
-
-    photos = api_resp.json().get('status', {}).get('media', {}).get('photos', [])
+    try:
+        api_resp = requests.get(_FXTWITTER_API.format(status_id), timeout=(5, 10))
+        api_resp.raise_for_status()
+        photos = api_resp.json().get('status', {}).get('media', {}).get('photos', [])
+    except (requests.RequestException, ValueError):
+        return 'Could not retrieve this X post', 502
     if not photos:
         return 'No photos found in this tweet', 404
 
     return ''.join(
-        f'<img src="{url_for("minify.serve_compressed_image", token=_get_token(), url=p["url"])}" alt="X Image">'
-        for p in photos
+        '<img src="{}" alt="X Image">'.format(
+            html.escape(
+                url_for(
+                    'minify.serve_compressed_image',
+                    token=_get_token(),
+                    mode=_get_preset(),
+                    url=photo['url'],
+                ),
+                quote=True,
+            )
+        )
+        for photo in photos
+        if photo.get('url')
     )
 
 
@@ -100,5 +132,24 @@ def serve_compressed_image():
         return 'Unauthorized', 401
 
     url = _get_url_param()
-    buf = fetch_and_compress(url)
-    return send_file(buf, mimetype='image/jpeg')
+    if not url:
+        return 'Missing url parameter', 400
+
+    preset = _PRESETS.get(_get_preset())
+    if preset is None:
+        return 'Invalid mode; use data, balanced, or detail', 400
+
+    target_size_kb, max_side = preset
+    try:
+        buf = fetch_and_compress(url, target_size_kb, max_side)
+    except ValueError as exc:
+        return str(exc), 400
+    except requests.RequestException:
+        return 'Could not download the source image', 502
+    except (Image.UnidentifiedImageError, Image.DecompressionBombError, OSError):
+        return 'The URL did not return a supported image', 415
+
+    response = send_file(buf, mimetype='image/jpeg', max_age=86400)
+    response.cache_control.private = True
+    response.cache_control.public = False
+    return response
