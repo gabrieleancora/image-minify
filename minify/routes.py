@@ -13,10 +13,13 @@ _FXTWITTER_API = 'https://api.fxtwitter.com/2/status/{}'
 _X_STATUS_ID_RE = re.compile(r'/status/(\d+)')
 _X_HOSTS = {'x.com', 'twitter.com', 'www.x.com', 'www.twitter.com', 'fxtwitter.com', 'www.fxtwitter.com'}
 _PRESETS = {
-    'data': (40, 640),
-    'balanced': (100, 1200),
-    'detail': (250, 1920),
+    # Maximum KB, maximum side in pixels, preferred quality. The byte size is
+    # a ceiling, not a target: images that compress well remain much smaller.
+    'data': (40, 640, 45),
+    'balanced': (100, 1200, 65),
+    'detail': (250, 1920, 80),
 }
+_OUTPUT_FORMATS = {'webp': 'image/webp', 'jpeg': 'image/jpeg'}
 
 
 def _get_token():
@@ -62,6 +65,26 @@ def _get_preset():
     return request.args.get('mode', 'balanced')
 
 
+def _image_url(url: str, output_format: str):
+    return url_for(
+        'minify.serve_compressed_image',
+        token=_get_token(),
+        mode=_get_preset(),
+        format=output_format,
+        url=url,
+    )
+
+
+def _image_tag(url: str, alt: str):
+    webp_url = html.escape(_image_url(url, 'webp'), quote=True)
+    jpeg_url = html.escape(_image_url(url, 'jpeg'), quote=True)
+    escaped_alt = html.escape(alt, quote=True)
+    return (
+        f'<picture><source srcset="{webp_url}" type="image/webp">'
+        f'<img src="{jpeg_url}" alt="{escaped_alt}"></picture>'
+    )
+
+
 @bp.route('/minify')
 def minify():
     if not _check_token():
@@ -85,13 +108,7 @@ def _is_x_url(url: str):
 
 
 def _minify_direct(url: str):
-    image_url = url_for(
-        'minify.serve_compressed_image',
-        token=_get_token(),
-        mode=_get_preset(),
-        url=url,
-    )
-    return f'<img src="{html.escape(image_url, quote=True)}" alt="Small image">'
+    return _image_tag(url, 'Small image')
 
 
 def _minify_x(url: str):
@@ -110,17 +127,7 @@ def _minify_x(url: str):
         return 'No photos found in this tweet', 404
 
     return ''.join(
-        '<img src="{}" alt="X Image">'.format(
-            html.escape(
-                url_for(
-                    'minify.serve_compressed_image',
-                    token=_get_token(),
-                    mode=_get_preset(),
-                    url=photo['url'],
-                ),
-                quote=True,
-            )
-        )
+        _image_tag(photo['url'], 'X Image')
         for photo in photos
         if photo.get('url')
     )
@@ -139,9 +146,20 @@ def serve_compressed_image():
     if preset is None:
         return 'Invalid mode; use data, balanced, or detail', 400
 
-    target_size_kb, max_side = preset
+    output_format = request.args.get('format', 'webp').lower()
+    mimetype = _OUTPUT_FORMATS.get(output_format)
+    if mimetype is None:
+        return 'Invalid format; use webp or jpeg', 400
+
+    target_size_kb, max_side, preferred_quality = preset
     try:
-        buf = fetch_and_compress(url, target_size_kb, max_side)
+        buf = fetch_and_compress(
+            url,
+            target_size_kb,
+            max_side,
+            preferred_quality,
+            output_format,
+        )
     except ValueError as exc:
         return str(exc), 400
     except requests.RequestException:
@@ -149,7 +167,7 @@ def serve_compressed_image():
     except (Image.UnidentifiedImageError, Image.DecompressionBombError, OSError):
         return 'The URL did not return a supported image', 415
 
-    response = send_file(buf, mimetype='image/jpeg', max_age=86400)
+    response = send_file(buf, mimetype=mimetype, max_age=86400)
     response.cache_control.private = True
     response.cache_control.public = False
     return response

@@ -1,7 +1,7 @@
 # Image-Minify
 
 A small web server that turns direct image URLs and X/Twitter status URLs into
-bandwidth-friendly JPEGs for airplane messaging Wi-Fi and other very slow links.
+bandwidth-friendly images for airplane messaging Wi-Fi and other very slow links.
 
 ## Usage
 
@@ -19,11 +19,11 @@ http://127.0.0.1:5000/minify?url=https://example.com/photo.jpg
 
 Three compression modes are available:
 
-| Mode | Maximum transfer size per image | Maximum side |
-| --- | ---: | ---: |
-| `data` | 40 KB | 640 px |
-| `balanced` (default) | 100 KB | 1200 px |
-| `detail` | 250 KB | 1920 px |
+| Mode | Maximum transfer size per image | Maximum side | Preferred quality |
+| --- | ---: | ---: | ---: |
+| `data` | 40 KB | 640 px | 45 |
+| `balanced` (default) | 100 KB | 1200 px | 65 |
+| `detail` | 250 KB | 1920 px | 80 |
 
 For example:
 
@@ -35,6 +35,10 @@ If `token.txt` contains a token, add `token=...` before `url`. Keep `url` as the
 last query parameter when pasting a URL without encoding it so that source URLs
 containing their own `&` parameters (such as Discord CDN URLs) remain intact.
 
-The compressor preserves orientation, puts transparent images on a white
-background, and reduces both JPEG quality and pixel dimensions when necessary
-to stay inside the selected byte budget.
+The maximum transfer size is a ceiling rather than a target. The compressor
+first uses the preferred quality, keeping the result as-is when it is already
+under the limit. It only lowers quality and dimensions when necessary.
+
+WebP is served to Safari 14+ and other modern browsers. The generated page uses
+JPEG as an automatic fallback for older browsers. WebP also preserves image
+transparency; the JPEG fallback places transparent images on a white background.

@@ -23,6 +23,9 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('mode=data', body)
         self.assertIn('width%3D100%26key%3Dabc', body)
+        self.assertIn('<picture>', body)
+        self.assertIn('format=webp', body)
+        self.assertIn('format=jpeg', body)
 
     @patch('minify.routes._check_token', return_value=True)
     def test_invalid_mode_is_rejected(self, _check_token):
@@ -34,7 +37,7 @@ class RouteTests(unittest.TestCase):
     @patch('minify.routes.fetch_and_compress')
     @patch('minify.routes._check_token', return_value=True)
     def test_image_response_is_privately_cacheable(self, _check_token, compress):
-        compress.return_value = io.BytesIO(b'jpeg data')
+        compress.return_value = io.BytesIO(b'webp data')
 
         response = self.client.get(
             '/image?mode=data&url=https://example.com/image.jpg'
@@ -42,8 +45,9 @@ class RouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         compress.assert_called_once_with(
-            'https://example.com/image.jpg', 40, 640
+            'https://example.com/image.jpg', 40, 640, 45, 'webp'
         )
+        self.assertEqual(response.content_type, 'image/webp')
         self.assertIn('private', response.headers['Cache-Control'])
         self.assertIn('max-age=86400', response.headers['Cache-Control'])
 

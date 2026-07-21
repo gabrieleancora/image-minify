@@ -31,13 +31,56 @@ class CompressionTests(unittest.TestCase):
         get.return_value = _Response(_noisy_png())
 
         result = fetch_and_compress(
-            'https://example.com/image.png', target_size_kb=40, max_side=640
+            'https://example.com/image.png',
+            target_size_kb=40,
+            max_side=640,
+            preferred_quality=45,
+            output_format='webp',
         )
 
         self.assertLessEqual(len(result.getvalue()), 40 * 1024)
         with Image.open(result) as image:
             self.assertLessEqual(max(image.size), 640)
-            self.assertEqual(image.format, 'JPEG')
+            self.assertEqual(image.format, 'WEBP')
+
+    @patch('image_utils.requests.get')
+    def test_small_simple_image_is_not_padded_to_budget(self, get):
+        image = Image.new('RGB', (320, 200), 'navy')
+        source = io.BytesIO()
+        image.save(source, format='PNG')
+        get.return_value = _Response(source.getvalue())
+
+        result = fetch_and_compress('https://example.com/simple.png')
+
+        self.assertLess(len(result.getvalue()), 10 * 1024)
+        with Image.open(result) as compressed:
+            self.assertEqual(compressed.format, 'WEBP')
+
+    @patch('image_utils.requests.get')
+    def test_webp_preserves_transparency(self, get):
+        image = Image.new('RGBA', (64, 64), (255, 0, 0, 0))
+        source = io.BytesIO()
+        image.save(source, format='PNG')
+        get.return_value = _Response(source.getvalue())
+
+        result = fetch_and_compress('https://example.com/transparent.png')
+
+        with Image.open(result) as compressed:
+            self.assertEqual(compressed.mode, 'RGBA')
+
+    @patch('image_utils.requests.get')
+    def test_jpeg_fallback_is_still_available(self, get):
+        image = Image.new('RGB', (320, 200), 'green')
+        source = io.BytesIO()
+        image.save(source, format='PNG')
+        get.return_value = _Response(source.getvalue())
+
+        result = fetch_and_compress(
+            'https://example.com/image.png', output_format='jpeg'
+        )
+
+        with Image.open(result) as compressed:
+            self.assertEqual(compressed.format, 'JPEG')
 
     def test_rejects_non_http_urls(self):
         with self.assertRaises(ValueError):
