@@ -20,6 +20,7 @@ _PRESETS = {
     'detail': (250, 1920, 80),
 }
 _OUTPUT_FORMATS = {'webp': 'image/webp', 'jpeg': 'image/jpeg'}
+_TOKEN_ENV_VAR = 'PLANE_WIFI_TOKEN'
 
 
 def _get_token():
@@ -32,6 +33,11 @@ _cached_token = None
 
 def _load_token():
     global _cached_token
+
+    environment_token = os.getenv(_TOKEN_ENV_VAR, '').strip()
+    if environment_token:
+        return environment_token
+
     if _cached_token is not None:
         return _cached_token
     try:

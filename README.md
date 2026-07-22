@@ -31,8 +31,18 @@ For example:
 http://127.0.0.1:5000/minify?mode=data&url=https://example.com/photo.jpg
 ```
 
-If `token.txt` contains a token, add `token=...` before `url`. Keep `url` as the
-last query parameter when pasting a URL without encoding it so that source URLs
+Set the optional authentication token through the `PLANE_WIFI_TOKEN`
+environment variable before starting the server:
+
+```powershell
+$env:PLANE_WIFI_TOKEN = 'your-secret-token'
+python main.py
+```
+
+`token.txt` remains supported as a fallback when the environment variable is
+unset or empty. A non-empty environment variable takes precedence over the
+file. Add `token=...` before `url` when making a request. Keep `url` as the last
+query parameter when pasting a URL without encoding it so that source URLs
 containing their own `&` parameters (such as Discord CDN URLs) remain intact.
 
 The maximum transfer size is a ceiling rather than a target. The compressor

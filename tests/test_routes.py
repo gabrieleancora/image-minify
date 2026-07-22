@@ -1,8 +1,9 @@
 import io
 import unittest
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 from app import start_app
+from minify import routes
 
 
 class RouteTests(unittest.TestCase):
@@ -50,6 +51,25 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(response.content_type, 'image/webp')
         self.assertIn('private', response.headers['Cache-Control'])
         self.assertIn('max-age=86400', response.headers['Cache-Control'])
+
+
+class TokenConfigurationTests(unittest.TestCase):
+    def setUp(self):
+        self.previous_cached_token = routes._cached_token
+        routes._cached_token = None
+
+    def tearDown(self):
+        routes._cached_token = self.previous_cached_token
+
+    @patch('builtins.open', mock_open(read_data='file-token'))
+    @patch('minify.routes.os.getenv', return_value=' env-token ')
+    def test_environment_token_takes_precedence(self, getenv):
+        self.assertEqual(routes._load_token(), 'env-token')
+
+    @patch('builtins.open', mock_open(read_data=' file-token '))
+    @patch('minify.routes.os.getenv', return_value='')
+    def test_token_file_remains_the_fallback(self, getenv):
+        self.assertEqual(routes._load_token(), 'file-token')
 
 
 if __name__ == '__main__':
