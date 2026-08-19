@@ -56,10 +56,13 @@ class RouteTests(unittest.TestCase):
 class TokenConfigurationTests(unittest.TestCase):
     def setUp(self):
         self.previous_cached_token = routes._cached_token
+        self.previous_token_loaded = routes._token_loaded
         routes._cached_token = None
+        routes._token_loaded = False
 
     def tearDown(self):
         routes._cached_token = self.previous_cached_token
+        routes._token_loaded = self.previous_token_loaded
 
     @patch('builtins.open', mock_open(read_data='file-token'))
     @patch('minify.routes.os.getenv', return_value=' env-token ')
@@ -70,6 +73,21 @@ class TokenConfigurationTests(unittest.TestCase):
     @patch('minify.routes.os.getenv', return_value='')
     def test_token_file_remains_the_fallback(self, getenv):
         self.assertEqual(routes._load_token(), 'file-token')
+
+    @patch('builtins.open', mock_open(read_data='file-token'))
+    @patch('minify.routes.os.getenv', return_value=' env-token ')
+    def test_configured_token_is_cached(self, getenv):
+        self.assertEqual(routes._load_token(), 'env-token')
+        self.assertEqual(routes._load_token(), 'env-token')
+        getenv.assert_called_once_with('PLANE_WIFI_TOKEN', '')
+
+    @patch('builtins.open', new_callable=mock_open, read_data=' file-token ')
+    @patch('minify.routes.os.getenv', return_value='')
+    def test_file_token_is_loaded_once(self, getenv, open_file):
+        self.assertEqual(routes._load_token(), 'file-token')
+        self.assertEqual(routes._load_token(), 'file-token')
+        getenv.assert_called_once_with('PLANE_WIFI_TOKEN', '')
+        open_file.assert_called_once_with(routes._TOKEN_FILE)
 
 
 if __name__ == '__main__':

@@ -29,22 +29,26 @@ def _get_token():
 
 _TOKEN_FILE = os.path.join(os.path.dirname(__file__), '..', 'token.txt')
 _cached_token = None
+_token_loaded = False
 
 
 def _load_token():
-    global _cached_token
+    global _cached_token, _token_loaded
+
+    if _token_loaded:
+        return _cached_token
 
     environment_token = os.getenv(_TOKEN_ENV_VAR, '').strip()
     if environment_token:
-        return environment_token
+        _cached_token = environment_token
+    else:
+        try:
+            with open(_TOKEN_FILE) as f:
+                _cached_token = f.read().strip()
+        except FileNotFoundError:
+            _cached_token = None
 
-    if _cached_token is not None:
-        return _cached_token
-    try:
-        with open(_TOKEN_FILE) as f:
-            _cached_token = f.read().strip()
-    except FileNotFoundError:
-        pass
+    _token_loaded = True
     return _cached_token
 
 

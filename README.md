@@ -41,9 +41,12 @@ python main.py
 
 `token.txt` remains supported as a fallback when the environment variable is
 unset or empty. A non-empty environment variable takes precedence over the
-file. Add `token=...` before `url` when making a request. Keep `url` as the last
-query parameter when pasting a URL without encoding it so that source URLs
-containing their own `&` parameters (such as Discord CDN URLs) remain intact.
+file. The selected token is cached by each server process, so restart the
+application (or its Docker container) after changing the environment variable
+or token file. Add `token=...` before `url` when making a request. Keep `url`
+as the last query parameter when pasting a URL without encoding it so that
+source URLs containing their own `&` parameters (such as Discord CDN URLs)
+remain intact.
 
 The maximum transfer size is a ceiling rather than a target. The compressor
 first uses the preferred quality, keeping the result as-is when it is already
