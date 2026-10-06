@@ -1,0 +1,94 @@
+import io
+import unittest
+from unittest.mock import mock_open, patch
+
+from app import start_app
+from minify import routes
+
+
+class RouteTests(unittest.TestCase):
+    def setUp(self):
+        self.client = start_app().test_client()
+
+    @patch('minify.routes._check_token', return_value=True)
+    def test_mode_is_forwarded_and_nested_query_is_preserved(self, _check_token):
+        response = self.client.get(
+            '/minify',
+            query_string={
+                'mode': 'data',
+                'url': 'https://cdn.example/image.png?width=100&key=abc',
+            },
+        )
+
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('mode=data', body)
+        self.assertIn('width%3D100%26key%3Dabc', body)
+        self.assertIn('<picture>', body)
+        self.assertIn('format=webp', body)
+        self.assertIn('format=jpeg', body)
+
+    @patch('minify.routes._check_token', return_value=True)
+    def test_invalid_mode_is_rejected(self, _check_token):
+        response = self.client.get(
+            '/minify?mode=unlimited&url=https://example.com/image.jpg'
+        )
+        self.assertEqual(response.status_code, 400)
+
+    @patch('minify.routes.fetch_and_compress')
+    @patch('minify.routes._check_token', return_value=True)
+    def test_image_response_is_privately_cacheable(self, _check_token, compress):
+        compress.return_value = io.BytesIO(b'webp data')
+
+        response = self.client.get(
+            '/image?mode=data&url=https://example.com/image.jpg'
+        )
+
+        self.assertEqual(response.status_code, 200)
+        compress.assert_called_once_with(
+            'https://example.com/image.jpg', 40, 640, 45, 'webp'
+        )
+        self.assertEqual(response.content_type, 'image/webp')
+        self.assertIn('private', response.headers['Cache-Control'])
+        self.assertIn('max-age=86400', response.headers['Cache-Control'])
+
+
+class TokenConfigurationTests(unittest.TestCase):
+    def setUp(self):
+        self.previous_cached_token = routes._cached_token
+        self.previous_token_loaded = routes._token_loaded
+        routes._cached_token = None
+        routes._token_loaded = False
+
+    def tearDown(self):
+        routes._cached_token = self.previous_cached_token
+        routes._token_loaded = self.previous_token_loaded
+
+    @patch('builtins.open', mock_open(read_data='file-token'))
+    @patch('minify.routes.os.getenv', return_value=' env-token ')
+    def test_environment_token_takes_precedence(self, getenv):
+        self.assertEqual(routes._load_token(), 'env-token')
+
+    @patch('builtins.open', mock_open(read_data=' file-token '))
+    @patch('minify.routes.os.getenv', return_value='')
+    def test_token_file_remains_the_fallback(self, getenv):
+        self.assertEqual(routes._load_token(), 'file-token')
+
+    @patch('builtins.open', mock_open(read_data='file-token'))
+    @patch('minify.routes.os.getenv', return_value=' env-token ')
+    def test_configured_token_is_cached(self, getenv):
+        self.assertEqual(routes._load_token(), 'env-token')
+        self.assertEqual(routes._load_token(), 'env-token')
+        getenv.assert_called_once_with('PLANE_WIFI_TOKEN', '')
+
+    @patch('builtins.open', new_callable=mock_open, read_data=' file-token ')
+    @patch('minify.routes.os.getenv', return_value='')
+    def test_file_token_is_loaded_once(self, getenv, open_file):
+        self.assertEqual(routes._load_token(), 'file-token')
+        self.assertEqual(routes._load_token(), 'file-token')
+        getenv.assert_called_once_with('PLANE_WIFI_TOKEN', '')
+        open_file.assert_called_once_with(routes._TOKEN_FILE)
+
+
+if __name__ == '__main__':
+    unittest.main()
